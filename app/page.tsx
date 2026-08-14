@@ -96,7 +96,7 @@ export default function Home() {
         } else if (scoreStr === "E" || scoreStr === "EVEN") {
           rawScore = 0;
         } else {
-          const parsed = parseInt(scoreStr.replace("+", ""), 10);
+          const parsed = parseInt(String(scoreStr).replace("+", ""), 10);
           rawScore = isNaN(parsed) ? 0 : parsed;
         }
 
@@ -126,35 +126,23 @@ export default function Home() {
           pos = String(match.order);
         }
 
-// 4. Exact "THRU" Hole Status Extraction
+        // 4. Exact "THRU" Hole Status Extraction
         let thru = "-";
-        
-        // Priority 1: Direct display values from ESPN
-        if (match?.status?.displayThru) {
+        const shortDetail = match?.status?.type?.shortDetail || "";
+        const isCompleted = match?.status?.type?.completed || shortDetail === "F" || shortDetail === "FINAL";
+
+        if (isCompleted) {
+          thru = "F";
+        } else if (match?.status?.displayThru) {
           thru = match.status.displayThru;
+        } else if (match?.status?.hole) {
+          thru = String(match.status.hole);
         } else if (match?.status?.thru) {
           thru = String(match.status.thru);
-        } 
-        // Priority 2: Count completed holes from linescores array (e.g. 18 holes = F or current hole count)
-        else if (Array.isArray(match?.linescores) && match.linescores.length > 0) {
-          const currentRoundLinescores = match.linescores;
-          const completedHoles = currentRoundLinescores.filter((l: any) => l.value !== undefined && l.value !== null).length;
-          
-          if (completedHoles === 18 || match?.status?.type?.completed) {
-            thru = "F";
-          } else if (completedHoles > 0) {
-            thru = String(completedHoles);
-          }
-        }
-        // Priority 3: Fallback to period or short detail (e.g. "7:15 AM" or "F")
-        if (thru === "-") {
-          if (match?.status?.type?.completed) {
-            thru = "F";
-          } else if (match?.status?.period && match.status.period > 0) {
-            thru = String(match.status.period);
-          } else if (match?.status?.type?.shortDetail) {
-            thru = match.status.type.shortDetail;
-          }
+        } else if (shortDetail && shortDetail !== "SCHEDULED") {
+          thru = shortDetail;
+        } else {
+          thru = "Tee";
         }
 
         return {
@@ -163,7 +151,7 @@ export default function Home() {
           golferName: item.golferName,
           displayOdds: item.displayOdds,
           odds: item.odds,
-          score: typeof scoreStr === "number" ? (scoreStr > 0 ? `+${scoreStr}` : scoreStr === 0 ? "E" : `${scoreStr}`) : scoreStr,
+          score: typeof scoreStr === "number" ? (scoreStr > 0 ? `+${scoreStr}` : scoreStr === 0 ? "E" : `${scoreStr}`) : String(scoreStr),
           rawScore,
           position: pos,
           through: thru,
