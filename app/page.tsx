@@ -126,18 +126,35 @@ export default function Home() {
           pos = String(match.order);
         }
 
-        // 4. Exact "THRU" Hole Status Extraction
+// 4. Exact "THRU" Hole Status Extraction
         let thru = "-";
+        
+        // Priority 1: Direct display values from ESPN
         if (match?.status?.displayThru) {
           thru = match.status.displayThru;
         } else if (match?.status?.thru) {
           thru = String(match.status.thru);
-        } else if (match?.status?.period) {
-          thru = match.status.type?.completed ? "F" : `Hole ${match.status.period}`;
-        } else if (match?.status?.type?.shortDetail) {
-          thru = match.status.type.shortDetail;
-        } else if (match?.status?.type?.completed) {
-          thru = "F";
+        } 
+        // Priority 2: Count completed holes from linescores array (e.g. 18 holes = F or current hole count)
+        else if (Array.isArray(match?.linescores) && match.linescores.length > 0) {
+          const currentRoundLinescores = match.linescores;
+          const completedHoles = currentRoundLinescores.filter((l: any) => l.value !== undefined && l.value !== null).length;
+          
+          if (completedHoles === 18 || match?.status?.type?.completed) {
+            thru = "F";
+          } else if (completedHoles > 0) {
+            thru = String(completedHoles);
+          }
+        }
+        // Priority 3: Fallback to period or short detail (e.g. "7:15 AM" or "F")
+        if (thru === "-") {
+          if (match?.status?.type?.completed) {
+            thru = "F";
+          } else if (match?.status?.period && match.status.period > 0) {
+            thru = String(match.status.period);
+          } else if (match?.status?.type?.shortDetail) {
+            thru = match.status.type.shortDetail;
+          }
         }
 
         return {
