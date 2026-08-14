@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, AlertCircle, Trophy } from "lucide-react";
 
-// 1. EXACT MAPPING TABLE WITH ODDS & NORMALIZED NAMES
+// 1. MAPPING TABLE WITH ODDS & NORMALIZED NAMES
 const PARTICIPANT_MAPPING = [
   { originalOrder: 1, pandejo: "Chris", golferName: "Scottie Scheffler", odds: 450, displayOdds: "+450" },
   { originalOrder: 2, pandejo: "Zach", golferName: "Rory McIlroy", odds: 1050, displayOdds: "+1050" },
@@ -19,7 +19,8 @@ const PARTICIPANT_MAPPING = [
   { originalOrder: 12, pandejo: "Aldo", golferName: "Si Woo Kim", odds: 3300, displayOdds: "+3300" },
 ];
 
-const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
+const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
+const ESPN_SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/summary";
 
 // String normalizer to match variations like "Ludvig Aberg" vs "Ludvig Åberg"
 function normalizeName(str: string): string {
@@ -54,14 +55,31 @@ export default function Home() {
   async function fetchLiveDraftOrder() {
     setLoading(true);
     try {
-      // Direct browser fetch to bypass Vercel server 403 blocks
-      const response = await fetch(`${ESPN_ENDPOINT}?_=${Date.now()}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      // Step 1: Get current event ID from scoreboard
+      const sbRes = await fetch(`${ESPN_SCOREBOARD}?_=${Date.now()}`);
+      if (!sbRes.ok) throw new Error(`Scoreboard HTTP ${sbRes.status}`);
+      const sbData = await sbRes.json();
 
-      const data = await response.json();
-      const competitors = data?.events?.[0]?.competitions?.[0]?.competitors || [];
+      const eventId = sbData?.events?.[0]?.id;
+      let competitors: any[] = sbData?.events?.[0]?.competitions?.[0]?.competitors || [];
 
-      // Map competitors and apply robust status extraction
+      // Step 2: Fetch deep summary endpoint if event ID is present
+      if (eventId) {
+        try {
+          const sumRes = await fetch(`${ESPN_SUMMARY}?event=${eventId}&_=${Date.now()}`);
+          if (sumRes.ok) {
+            const sumData = await sumRes.json();
+            const detailedComp = sumData?.leaderboard?.competitors;
+            if (detailedComp && detailedComp.length > 0) {
+              competitors = detailedComp;
+            }
+          }
+        } catch (sumErr) {
+          console.warn("Summary endpoint fetch failed, falling back to scoreboard:", sumErr);
+        }
+      }
+
+      // Step 3: Map competitors with robust field inspection
       const mapped: ProcessedGolfer[] = PARTICIPANT_MAPPING.map((item) => {
         const normalizedTarget = normalizeName(item.golferName);
 
@@ -70,29 +88,57 @@ export default function Home() {
           return name.includes(normalizedTarget) || normalizedTarget.includes(name);
         });
 
-        const rawScore = match?.score ? parseInt(match.score, 10) : 0;
-        const statusType = match?.status?.type?.name?.toLowerCase() || "";
-        const detail = match?.status?.type?.shortDetail?.toLowerCase() || "";
+        // 1. Raw score parsing
+        const scoreStr = match?.score || match?.totalScore || match?.linescores?.[0]?.value || "E";
+        let rawScore = 0;
+        if (typeof scoreStr === "number") {
+          rawScore = scoreStr;
+        } else if (scoreStr === "E" || scoreStr === "EVEN") {
+          rawScore = 0;
+        } else {
+          const parsed = parseInt(scoreStr.replace("+", ""), 10);
+          rawScore = isNaN(parsed) ? 0 : parsed;
+        }
 
-        // Detect Cut, WD, or DQ status
+        // 2. Cut / Out Detection
+        const statusType = (match?.status?.type?.name || match?.status?.type?.state || "").toLowerCase();
+        const detail = (match?.status?.type?.shortDetail || match?.status?.type?.detail || "").toLowerCase();
+        const displayVal = (match?.status?.displayValue || "").toUpperCase();
+
         const isCutOrOut =
           statusType.includes("cut") ||
           detail.includes("cut") ||
           detail.includes("wd") ||
           detail.includes("dq") ||
-          match?.status?.displayValue === "CUT";
+          displayVal === "CUT";
 
-        // Robust Position extraction
-        const pos =
-          match?.status?.position?.displayName ||
-          (typeof match?.status?.position === "string" ? match?.status?.position : null) ||
-          match?.place ||
-          "-";
+        // 3. Exact Tournament Position Extraction
+        let pos = "-";
+        if (match?.status?.position?.displayName) {
+          pos = match.status.position.displayName;
+        } else if (typeof match?.status?.position === "string" || typeof match?.status?.position === "number") {
+          pos = String(match.status.position);
+        } else if (match?.rank) {
+          pos = `T${match.rank}`;
+        } else if (match?.place) {
+          pos = String(match.place);
+        } else if (match?.order) {
+          pos = String(match.order);
+        }
 
-        // Robust Thru extraction
-        const thru =
-          match?.status?.displayThru ||
-          (match?.status?.type?.completed ? "F" : match?.status?.type?.detail || "Tee");
+        // 4. Exact "THRU" Hole Status Extraction
+        let thru = "-";
+        if (match?.status?.displayThru) {
+          thru = match.status.displayThru;
+        } else if (match?.status?.thru) {
+          thru = String(match.status.thru);
+        } else if (match?.status?.period) {
+          thru = match.status.type?.completed ? "F" : `Hole ${match.status.period}`;
+        } else if (match?.status?.type?.shortDetail) {
+          thru = match.status.type.shortDetail;
+        } else if (match?.status?.type?.completed) {
+          thru = "F";
+        }
 
         return {
           projectedPick: 0,
@@ -100,8 +146,8 @@ export default function Home() {
           golferName: item.golferName,
           displayOdds: item.displayOdds,
           odds: item.odds,
-          score: match?.score || "E",
-          rawScore: isNaN(rawScore) ? 0 : rawScore,
+          score: typeof scoreStr === "number" ? (scoreStr > 0 ? `+${scoreStr}` : scoreStr === 0 ? "E" : `${scoreStr}`) : scoreStr,
+          rawScore,
           position: pos,
           through: thru,
           isCutOrOut,
@@ -111,18 +157,18 @@ export default function Home() {
 
       // SORTING LOGIC:
       // 1. Active players above CUT/WD/DQ players.
-      // 2. Lowest/best relative score gets priority (e.g. -5 beats -2).
+      // 2. Lowest relative score drafts 1st (e.g. -6 beats -4).
       // 3. TIE BREAKER: Longer/worst opening odds win (higher numerical oddsValue beats lower).
       mapped.sort((a, b) => {
         if (a.isCutOrOut !== b.isCutOrOut) {
-          return a.isCutOrOut ? 1 : -1; // Cut players pushed to bottom
+          return a.isCutOrOut ? 1 : -1;
         }
 
         if (a.rawScore !== b.rawScore) {
-          return a.rawScore - b.rawScore; // Lower score first
+          return a.rawScore - b.rawScore;
         }
 
-        // Tie Breaker: Worst opening odds (higher +value) gets higher draft pick
+        // Tie Breaker: Worst opening odds (+3300 beats +450)
         return b.odds - a.odds;
       });
 
@@ -145,7 +191,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchLiveDraftOrder();
-    const interval = setInterval(fetchLiveDraftOrder, 30000); // 30s auto-refresh
+    const interval = setInterval(fetchLiveDraftOrder, 30000);
     return () => clearInterval(interval);
   }, []);
 
