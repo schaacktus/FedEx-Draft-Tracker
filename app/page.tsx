@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, AlertCircle, Trophy, Flag } from "lucide-react";
+import { RefreshCw, AlertCircle, Trophy } from "lucide-react";
 
-// 1. EXACT MAPPING TABLE FROM YOUR IMAGE WITH ODDS & NORMALIZED NAMES
+// 1. EXACT MAPPING TABLE WITH ODDS & NORMALIZED NAMES
 const PARTICIPANT_MAPPING = [
   { originalOrder: 1, pandejo: "Chris", golferName: "Scottie Scheffler", odds: 450, displayOdds: "+450" },
   { originalOrder: 2, pandejo: "Zach", golferName: "Rory McIlroy", odds: 1050, displayOdds: "+1050" },
@@ -21,7 +21,7 @@ const PARTICIPANT_MAPPING = [
 
 const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard";
 
-// String normalizer to match variations like "Ludvig Aberg" vs "Ludvig Åberg" or "Colin" vs "Collin"
+// String normalizer to match variations like "Ludvig Aberg" vs "Ludvig Åberg"
 function normalizeName(str: string): string {
   return str
     .normalize("NFD")
@@ -61,7 +61,7 @@ export default function Home() {
       const data = await response.json();
       const competitors = data?.events?.[0]?.competitions?.[0]?.competitors || [];
 
-      // Map competitors and apply status detection
+      // Map competitors and apply robust status extraction
       const mapped: ProcessedGolfer[] = PARTICIPANT_MAPPING.map((item) => {
         const normalizedTarget = normalizeName(item.golferName);
 
@@ -82,6 +82,18 @@ export default function Home() {
           detail.includes("dq") ||
           match?.status?.displayValue === "CUT";
 
+        // Robust Position extraction
+        const pos =
+          match?.status?.position?.displayName ||
+          (typeof match?.status?.position === "string" ? match?.status?.position : null) ||
+          match?.place ||
+          "-";
+
+        // Robust Thru extraction
+        const thru =
+          match?.status?.displayThru ||
+          (match?.status?.type?.completed ? "F" : match?.status?.type?.detail || "Tee");
+
         return {
           projectedPick: 0,
           pandejo: item.pandejo,
@@ -90,8 +102,8 @@ export default function Home() {
           odds: item.odds,
           score: match?.score || "E",
           rawScore: isNaN(rawScore) ? 0 : rawScore,
-          position: match?.status?.position || "-",
-          through: match?.status?.displayThru || "Tee",
+          position: pos,
+          through: thru,
           isCutOrOut,
           statusText: isCutOrOut ? "CUT / OUT" : match?.status?.type?.shortDetail || "Active",
         };
