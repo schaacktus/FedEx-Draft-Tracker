@@ -126,23 +126,35 @@ export default function Home() {
           pos = String(match.order);
         }
 
-        // 4. Exact "THRU" Hole Status Extraction
+        // 4. Robust "THRU" Extraction Chain
         let thru = "-";
-        const shortDetail = match?.status?.type?.shortDetail || "";
+        const shortDetail = match?.status?.type?.shortDetail || match?.status?.type?.detail || "";
         const isCompleted = match?.status?.type?.completed || shortDetail === "F" || shortDetail === "FINAL";
+
+        const rawThru =
+          match?.status?.displayThru ??
+          match?.displayThru ??
+          match?.status?.thru ??
+          match?.thru ??
+          match?.status?.hole ??
+          match?.hole;
 
         if (isCompleted) {
           thru = "F";
-        } else if (match?.status?.displayThru) {
-          thru = match.status.displayThru;
-        } else if (match?.status?.hole) {
-          thru = String(match.status.hole);
-        } else if (match?.status?.thru) {
-          thru = String(match.status.thru);
-        } else if (shortDetail && shortDetail !== "SCHEDULED") {
+        } else if (rawThru !== undefined && rawThru !== null && rawThru !== "" && rawThru !== 0) {
+          thru = String(rawThru);
+        } else if (shortDetail && !shortDetail.toUpperCase().includes("SCHEDULED")) {
           thru = shortDetail;
         } else {
-          thru = "Tee";
+          // Check active round linescores
+          const activeRound = Array.isArray(match?.linescores) ? match.linescores[match.linescores.length - 1] : null;
+          if (activeRound?.thru) {
+            thru = String(activeRound.thru);
+          } else if (activeRound?.displayValue) {
+            thru = String(activeRound.displayValue);
+          } else {
+            thru = "Tee";
+          }
         }
 
         return {
@@ -156,7 +168,7 @@ export default function Home() {
           position: pos,
           through: thru,
           isCutOrOut,
-          statusText: isCutOrOut ? "CUT / OUT" : match?.status?.type?.shortDetail || "Active",
+          statusText: isCutOrOut ? "CUT / OUT" : shortDetail || "Active",
         };
       });
 
